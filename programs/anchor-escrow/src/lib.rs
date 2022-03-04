@@ -1,209 +1,200 @@
-pub mod utils;
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{clock};
 use anchor_spl::token::{self, CloseAccount, Mint, SetAuthority, TokenAccount, Transfer};
 use spl_token::instruction::AuthorityType;
 
-declare_id!("EL7sdb92YQFzXdU9hgxHd67znWXCSiLaergfFr2ZdhsZ");
+declare_id!("FcuGHuHkbritFfVdXC7W7kppMekwEibHuYbXy6xUCEMc");
 
 #[program]
 pub mod anchor_escrow {
     use super::*;
 
-    const ESCROW_PDA_SEED: &[u8] = b"escrow";
+    pub const ESCROW_PDA_SEED: &str = "sw_game_seeds";
+    pub const VAULT_TOKEN_SEED: &str = "sw_token-seed";
+    pub const VAULT_AUTH_SEED: &str = "sw_token-auth-seed";
+    pub const SPIN_ITEM_COUNT: usize = 15;
 
     pub fn initialize(
-        ctx: Context<Initialize>, nonce: u8
+        ctx: Context<Initialize>, _pool_bump: u8, vault_account_bump: u8,
     ) -> ProgramResult {
         msg!("initialize");
 
-        let spin_win = &mut ctx.accounts.spin_win;
-        spin_win.token_vault = ctx.accounts.token_vault.key();
-        spin_win.nonce = nonce;
+        let state = &mut ctx.accounts.state;
+        state.amount_list = [0; SPIN_ITEM_COUNT];
+        state.ratio_list = [0; SPIN_ITEM_COUNT];
+
+        state.nonce = _pool_bump;
 
         Ok(())
     }
 
-    pub fn add_item(
-        ctx: Context<AddItem>,
+    pub fn set_item(
+        ctx: Context<SetItem>,
+        item_index: u8,
         ratio: u8,
-        reward_type: u8,
         amount: u64,
-    ) -> Result<()> {
-        msg!("add_item");
+    ) -> ProgramResult {
+        msg!("set_item");
 
-        let spin_win = &mut ctx.accounts.spin_win;
-        let item_list = &mut spin_win.item_list;
-        let item = SpinItem {ratio: ratio, reward_type: reward_type, amount: amount, nft_account: ctx.accounts.nft_account, reward_account: ctx.accounts.reward_account};
-        item_list.push(item);
+        let state = &mut ctx.accounts.state;
+        state.ratio_list[item_index as usize] = ratio;
+        state.amount_list[item_index as usize] = amount;
 
-        if reward_type == 0 {
-            // reward token
-            spl_token_transfer_without_seed(
-                TokenTransferParamsWithoutSeed{
-                    source : spin_item.reward_account.clone(),
-                    destination : spin_win.token_vault.to_account_info(),
-                    authority : ctx.accounts.owner.clone,
-                    token_program : ctx.accounts.token_program.clone(),
-                    amount : spin_item.amount,
-                }
-            )?;
-        } else {
-            // nft token
-            spl_token_transfer_without_seed(
-                TokenTransferParamsWithoutSeed{
-                    source : spin_item.nft_account.clone(),
-                    destination : spin_win.token_vault.to_account_info(),
-                    authority : ctx.accounts.owner.clone,
-                    token_program : ctx.accounts.token_program.clone(),
-                    amount : 1,
-                }
-            )?;
-        }
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info().clone(),
+            token::Transfer {
+                from: ctx.accounts.reward_account.to_account_info(),
+                to: ctx.accounts.token_vault.to_account_info(),
+                authority: ctx.accounts.owner.to_account_info(),
+            },
+        );
+        token::transfer(cpi_ctx, amount)?;
 
         Ok(())
     }
 
-    // pub fn set_item(
-    //     ctx: Context<SpinWin>,
-    //     index: u8,
-    //     ratio: u8,
-    //     reward_type: u8,
-    //     amount: u64,
-    //     nft_account : Pubkey,
-    //     reward_account: Pubkey,
-    // ) -> Result<()> {
-    //     let item_list = &mut ctx.accounts.item_list;
-    //     if index < item_list.len() {
-    //         let item = &mut item_list[index];
-    //         item.ratio = ratio;
-    //         item.reward_type = reward_type;
-    //         item.amount = amount;
-    //         item.nft_account = nft_account;
-    //         item.reward_account = reward_account;
-    //     }
+    pub fn spin_wheel(ctx: Context<SpinWheel>) -> ProgramResult {
+        let state = &mut ctx.accounts.state;
+        let spin_index: u8 = get_spinresult(state) as u8;
+        state.last_spinindex = spin_index;
 
-    //     Ok(())
-    // }
-
-    fn get_spinresult(ctx: Context<SpinWheel>) -> u8 {
-        let spin_win = &mut ctx.accounts.spin_win;
-        let item_list = &mut spin_win.item_list;
-        let c = clock::Clock::get().unwrap();
-        let r = c.unix_timestamp % 100;
-        let start = 0;
-        for (pos, item) in item_list.iter().enumerate() {
-            let end = start + item.ratio;
-            if r >= start && r < end {
-                return pos;
-            }
-            start = end;
-        }
-
-        return 0;
+        return Ok(());
     }
 
-    pub fn spin_wheel(ctx: Context<SpinWheel>) -> Result<()> {
+    pub fn transfer_rewards(ctx: Context<TransferRewards>, spin_index: u8) -> ProgramResult {
 
-        let spin_win = &mut ctx.accounts.spin_win;
-        let spin_index = get_spinresult(ctx);
-        let spin_item = &mut spin_win.item_list[spin_index];
+        let state = &ctx.accounts.state;
+        let amount = state.amount_list[spin_index as usize];
 
-        if spin_item.reward_type == 0 {
-            // reward token
-            spl_token_transfer_without_seed(
-                TokenTransferParamsWithoutSeed{
-                    source : spin_item.reward_account.clone(),
-                    destination : ctx.accounts.dest_account.clone(),
-                    authority : spin_win.to_account_info(),
-                    token_program : ctx.accounts.token_program.clone(),
-                    amount : spin_item.amount,
-                }
-            )?;
-        } else {
-            // nft token
-            spl_token_transfer_without_seed(
-                TokenTransferParamsWithoutSeed{
-                    source : spin_item.nft_account.clone(),
-                    destination : ctx.accounts.dest_account.clone(),
-                    authority : spin_win.to_account_info(),
-                    token_program : ctx.accounts.token_program.clone(),
-                    amount : 1,
-                }
-            )?;
-        }
+        let cpi_ctx = CpiContext::new(
+            ctx.accounts.token_program.to_account_info().clone(),
+            token::Transfer {
+                from: ctx.accounts.token_vault.to_account_info(),
+                to: ctx.accounts.dest_account.to_account_info(),
+                authority: ctx.accounts.owner.to_account_info(),
+            },
+        );
+        token::transfer(cpi_ctx, amount)?;
 
         Ok(())
     }
 }
 
+fn get_spinresult(state: &mut SpinItemList) -> u8 {
+    let c = clock::Clock::get().unwrap();
+    let r = (c.unix_timestamp % 100) as u8;
+    let mut start = 0;
+    for (pos, item) in state.ratio_list.iter().enumerate() {
+        let end = start + item;
+        if r >= start && r < end {
+            return pos as u8;
+        }
+        start = end;
+    }
 
-
-///////////////////////////////////////////////////////////////////////
-
-#[derive(Accounts)]
-pub struct SpinItem<'info> {
-    ratio: u8, // percent
-    reward_type: u8, // 0 : token, 1 : nft
-    amount: u64, // reward amount
-
-    #[account(mut)]
-    nft_account: AccountInfo<'info>,
-
-    #[account(mut)]
-    reward_account: AccountInfo<'info>,
+    return 0;
 }
 
 #[derive(Accounts)]
-pub struct SpinWin {
-    pub item_list: Vec<SpinItem>,
-    pub token_vault: Account<'info, TokenAccount>,
-    pub nonce: u8,
-
-    #[account(mut)]
-    source_account : AccountInfo<'info>,
-}
-
-#[derive(Accounts)]
-pub struct SpinWheel<'info> {
+#[instruction(_bump: u8, _token_bump: u8)]
+pub struct Initialize<'info> {
+    /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut, signer)]
-    owner : AccountInfo<'info>,
+    initializer : AccountInfo<'info>,
 
-    #[account()]
-    spin_win : ProgramAccount<'info, SpinWin>,
+    mint: Account<'info, Mint>,
+    #[account(
+        init,
+        seeds = [VAULT_TOKEN_SEED.as_ref()],
+        bump = _token_bump,
+        payer = initializer,
+        token::mint = mint,
+        token::authority = initializer,
+    )]
+    token_vault: Account<'info, TokenAccount>,
 
-    #[account(mut,owner=spl_token::id())]
-    dest_account : AccountInfo<'info>,
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    #[account(init, payer=initializer, seeds=[ESCROW_PDA_SEED.as_ref()], bump = _bump)]
+    state : Account<'info, SpinItemList>,
 
-    #[account(mut,owner=spl_token::id())]
+    /// CHECK: this is not dangerous.
+    #[account(address=spl_token::id())]
     token_program : AccountInfo<'info>,
+
+    system_program: Program<'info, System>,
+    rent: Sysvar<'info, Rent>
 }
 
+
+#[account]
+#[derive(Default)]
+pub struct SpinItemList {
+    ratio_list: [u8; SPIN_ITEM_COUNT],
+    amount_list: [u64; SPIN_ITEM_COUNT],
+    nonce: u8,
+    last_spinindex: u8,
+}
+
+
 #[derive(Accounts)]
-pub struct AddItem<'info> {
+pub struct SetItem<'info> {
+    /// CHECK: this is not dangerous.
     #[account(mut, signer)]
     owner : AccountInfo<'info>, 
 
+    /// CHECK: this is not dangerous.
     #[account(mut)]
-    spin_win : ProgramAccount<'info, SpinWin>,
+    state : Account<'info, SpinItemList>,
 
-    #[account(mut,owner=spl_token::id())]
-    nft_account : AccountInfo<'info>,
+    token_mint: Account<'info, Mint>,
+    #[account(mut, 
+        constraint = token_vault.mint == token_mint.key(),
+        constraint = token_vault.owner == *owner.key,
+    )]
+    token_vault: Account<'info, TokenAccount>,
 
+    /// CHECK: this is not dangerous.
     #[account(mut,owner=spl_token::id())]
     reward_account : AccountInfo<'info>,
 
+    /// CHECK: this is not dangerous.
     #[account(address=spl_token::id())]
     token_program : AccountInfo<'info>,
 
     system_program : Program<'info,System>,
 }
 
-#[derive(Accounts)]
-#[instruction(nonce: u8)]
-pub struct Initialize<'info> {
-    #[account(mut)]
-    pub spin_win: ProgramAccount<'info, SpinWin>,
 
+#[derive(Accounts)]
+pub struct SpinWheel<'info> {
     #[account(mut)]
-    pub token_vault: Account<'info, TokenAccount>,
+    state : Account<'info, SpinItemList>,
+}
+
+#[derive(Accounts)]
+pub struct TransferRewards<'info> {
+    /// CHECK: this is not dangerous.
+    #[account(mut, signer)]
+    owner : AccountInfo<'info>, 
+
+    /// CHECK: this is not dangerous.
+    #[account(mut)]
+    state : Account<'info, SpinItemList>,
+
+    token_mint: Account<'info, Mint>,
+    #[account(mut, 
+        constraint = token_vault.mint == token_mint.key(),
+        constraint = token_vault.owner == *owner.key,
+    )]
+    token_vault: Account<'info, TokenAccount>,
+
+    /// CHECK: this is not dangerous.
+    #[account(mut,owner=spl_token::id())]
+    dest_account : AccountInfo<'info>,
+
+    /// CHECK: this is not dangerous.
+    #[account(address=spl_token::id())]
+    token_program : AccountInfo<'info>,
+
+    system_program : Program<'info,System>,
 }
