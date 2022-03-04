@@ -31,6 +31,8 @@ describe('anchor-escrow', () => {
   let pool_account_pda = null;
   let pool_account_bump = null;
 
+  let token_vault_list = [];
+
   const takerAmount = 1000;
   const initializerAmount = 500;
 
@@ -138,16 +140,12 @@ describe('anchor-escrow', () => {
     console.log('initialize start...');
 
     await program.rpc.initialize(
-      _pool_bump, vault_account_bump,
+      _pool_bump,
       {
         accounts: {
           initializer: initializerMainAccount.publicKey,
-          mint: mintA.publicKey,
-          tokenVault: vault_account_pda,
           state: pool_account_pda,
-          tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: anchor.web3.SystemProgram.programId,
-          rent: SYSVAR_RENT_PUBKEY
         },
         signers: [initializerMainAccount]
       }
@@ -160,8 +158,14 @@ describe('anchor-escrow', () => {
     console.log('Start to Set Item...');
 
     for (let i = 0; i < 15; i++) {
+      let randomPubkey = anchor.web3.Keypair.generate().publicKey;
+      let [_token_vault, _token_vault_bump] = await PublicKey.findProgramAddress([Buffer.from(randomPubkey.toBuffer())], program.programId);
+
+      token_vault_list.push({vault: _token_vault, bump: _token_vault_bump});
+
       let ratio = i == 14 ? 30 : 5;
       await program.rpc.setItem(
+        _token_vault_bump,
         i,
         ratio,
         new anchor.BN(2),
@@ -170,10 +174,12 @@ describe('anchor-escrow', () => {
             owner: initializerMainAccount.publicKey,
             state: pool_account_pda,
             tokenMint: mintA.publicKey,
-            tokenVault: vault_account_pda,
+            tokenVault: _token_vault,
+            rand: randomPubkey,
             rewardAccount: initializerTokenAccountA,
-            systemProgram: anchor.web3.SystemProgram.programId,
             tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: anchor.web3.SystemProgram.programId,
+            rent: SYSVAR_RENT_PUBKEY
           },
           signers: [initializerMainAccount]
         }
@@ -196,7 +202,9 @@ describe('anchor-escrow', () => {
       pool_account_pda
     );
 
-    console.log('==========================================');
+    let t_vault_account = token_vault_list[_state.lastSpinindex];
+    console.log('spin token vault : ', t_vault_account);
+
     console.log('last spin index : ', _state.lastSpinindex);
     await program.rpc.transferRewards(
       _state.lastSpinindex,
@@ -205,7 +213,7 @@ describe('anchor-escrow', () => {
           owner: initializerMainAccount.publicKey,
           state: pool_account_pda,
           tokenMint: mintA.publicKey,
-          tokenVault: vault_account_pda,
+          tokenVault: t_vault_account.vault,
           destAccount: initializerTokenAccountA,
           systemProgram: anchor.web3.SystemProgram.programId,
           tokenProgram: TOKEN_PROGRAM_ID,

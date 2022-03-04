@@ -15,7 +15,7 @@ pub mod anchor_escrow {
     pub const SPIN_ITEM_COUNT: usize = 15;
 
     pub fn initialize(
-        ctx: Context<Initialize>, _pool_bump: u8, vault_account_bump: u8,
+        ctx: Context<Initialize>, _pool_bump: u8,
     ) -> ProgramResult {
         msg!("initialize");
 
@@ -30,6 +30,7 @@ pub mod anchor_escrow {
 
     pub fn set_item(
         ctx: Context<SetItem>,
+        token_vault_bump: u8,
         item_index: u8,
         ratio: u8,
         amount: u64,
@@ -96,33 +97,17 @@ fn get_spinresult(state: &mut SpinItemList) -> u8 {
 }
 
 #[derive(Accounts)]
-#[instruction(_bump: u8, _token_bump: u8)]
+#[instruction(_bump: u8)]
 pub struct Initialize<'info> {
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(mut, signer)]
     initializer : AccountInfo<'info>,
 
-    mint: Account<'info, Mint>,
-    #[account(
-        init,
-        seeds = [VAULT_TOKEN_SEED.as_ref()],
-        bump = _token_bump,
-        payer = initializer,
-        token::mint = mint,
-        token::authority = initializer,
-    )]
-    token_vault: Account<'info, TokenAccount>,
-
     /// CHECK: This is not dangerous because we don't read or write from this account
     #[account(init, payer=initializer, seeds=[ESCROW_PDA_SEED.as_ref()], bump = _bump)]
     state : Account<'info, SpinItemList>,
 
-    /// CHECK: this is not dangerous.
-    #[account(address=spl_token::id())]
-    token_program : AccountInfo<'info>,
-
     system_program: Program<'info, System>,
-    rent: Sysvar<'info, Rent>
 }
 
 
@@ -137,6 +122,7 @@ pub struct SpinItemList {
 
 
 #[derive(Accounts)]
+#[instruction(_token_bump: u8)]
 pub struct SetItem<'info> {
     /// CHECK: this is not dangerous.
     #[account(mut, signer)]
@@ -147,11 +133,17 @@ pub struct SetItem<'info> {
     state : Account<'info, SpinItemList>,
 
     token_mint: Account<'info, Mint>,
-    #[account(mut, 
-        constraint = token_vault.mint == token_mint.key(),
-        constraint = token_vault.owner == *owner.key,
+    #[account(
+        init,
+        seeds = [(*rand.key).as_ref()],
+        bump = _token_bump,
+        payer = owner,
+        token::mint = token_mint,
+        token::authority = owner,
     )]
     token_vault: Account<'info, TokenAccount>,
+
+    rand : AccountInfo<'info>,
 
     /// CHECK: this is not dangerous.
     #[account(mut,owner=spl_token::id())]
@@ -162,6 +154,7 @@ pub struct SetItem<'info> {
     token_program : AccountInfo<'info>,
 
     system_program : Program<'info,System>,
+    rent: Sysvar<'info, Rent>
 }
 
 
