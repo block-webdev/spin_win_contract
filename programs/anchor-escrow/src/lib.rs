@@ -10,8 +10,6 @@ pub mod anchor_escrow {
     use super::*;
 
     pub const ESCROW_PDA_SEED: &str = "sw_game_seeds";
-    pub const VAULT_TOKEN_SEED: &str = "sw_token-seed";
-    pub const VAULT_AUTH_SEED: &str = "sw_token-auth-seed";
     pub const SPIN_ITEM_COUNT: usize = 15;
 
     pub fn initialize(
